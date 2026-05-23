@@ -92,6 +92,16 @@ IMAGE_MODEL=imagen-4.0-generate-001
 
 If no text or image key is configured, Bloom uses mock generation so the app remains demoable. API responses include provider metadata such as `mock`, `xiaomi`, `openai`, `google`, or `custom`.
 
+### Database
+
+For deployed persistence, set a Postgres connection string:
+
+```bash
+DATABASE_URL=postgresql://user:password@host/database?sslmode=require
+```
+
+When `DATABASE_URL` is present, Bloom automatically creates the required tables and stores session history, image versions, and settings in Postgres. When it is absent, Bloom falls back to local file storage in `.bloom-data/content-store.json`.
+
 ## Architecture
 
 Bloom keeps the backend inside the Next.js app using App Router route handlers.
@@ -110,7 +120,7 @@ Client UI
 Important modules:
 
 - `src/lib/backend/session.ts` - creates and verifies the signed opaque session cookie.
-- `src/lib/backend/storage.ts` - stores content, image versions, and settings in `.bloom-data/content-store.json`.
+- `src/lib/backend/storage.ts` - stores content, image versions, and settings in Postgres when `DATABASE_URL` exists, otherwise in `.bloom-data/content-store.json`.
 - `src/lib/backend/api.ts` - shared validation, error responses, parsing, and rate-limit helpers.
 - `src/lib/backend/ai/prompts.ts` - centralized prompt strategies, image prompt rules, style prompts, and quality rubric.
 - `src/lib/backend/ai/text.ts` - server-side text provider calls and mock fallback.
@@ -290,14 +300,14 @@ For deployment, set a strong `SESSION_SECRET`. Do not rely on local fallback sec
 
 ## Persistence And Deployment
 
-The assessment build uses lightweight file-backed storage in `.bloom-data/content-store.json`. This keeps the demo simple and easy to inspect.
+The local assessment build can use lightweight file-backed storage in `.bloom-data/content-store.json`. This keeps local demos simple and easy to inspect.
 
-For serverless or multi-instance deployments, replace the storage implementation with a hosted database such as Postgres, Neon, Supabase, or Vercel Postgres. Local filesystem writes can be ephemeral or inconsistent across instances.
+For Vercel/serverless or multi-instance deployments, set `DATABASE_URL` with a hosted Postgres provider such as Neon or Supabase. Local filesystem writes can be ephemeral or inconsistent across instances.
 
 Recommended deployment:
 
 - Vercel or Render for the Next.js app
-- Hosted database for durable history if the app needs production persistence
+- Vercel Marketplace Neon/Supabase Postgres for durable session history
 - Real provider keys stored as platform secrets
 - `BLOOM_SECURE_COOKIES=true` on HTTPS
 

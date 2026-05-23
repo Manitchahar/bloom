@@ -54,7 +54,7 @@ export default function DashboardPage() {
   return (
     <div>
       <PageHeader
-        title="Good morning, gardener ðŸŒ±"
+        title={`Good morning, gardener ${String.fromCodePoint(0x1f331)}`}
         description="Your content garden is flourishing. Here's what's blooming today."
       />
 

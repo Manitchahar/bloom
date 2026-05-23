@@ -66,7 +66,7 @@ export default function LibraryPage() {
   return (
     <div>
       <PageHeader
-        title="Your content garden ðŸ“š"
+        title={`Your content garden ${String.fromCodePoint(0x1f4da)}`}
         description="Everything you've cultivated, organized and ready to revisit."
       />
 

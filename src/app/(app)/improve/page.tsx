@@ -23,6 +23,7 @@ export default function ImprovePage() {
   const [result, setResult] = useState<{ text: string; explanation: string } | null>(null);
   const [error, setError] = useState("");
   const [brandVoice, setBrandVoice] = useState("");
+  const [targetAudience, setTargetAudience] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -45,14 +46,19 @@ export default function ImprovePage() {
     setError("");
 
     try {
-      const response = await improveContent({ content: input, goal, brandVoice });
+      const response = await improveContent({
+        content: input,
+        goal,
+        audience: goal === "audience" ? targetAudience : undefined,
+        brandVoice,
+      });
       setResult({ text: response.improved, explanation: response.explanation });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to refine content.");
     } finally {
       setImproving(false);
     }
-  }, [brandVoice, goal, input]);
+  }, [brandVoice, goal, input, targetAudience]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -108,7 +114,21 @@ export default function ImprovePage() {
               </button>
             ))}
           </div>
-          <Button onClick={improve} disabled={improving || !input.trim()} className="w-full">
+          {goal === "audience" && (
+            <label className="mb-5 block">
+              <span className="mb-2 flex items-center gap-1.5 text-sm font-medium text-[var(--text-secondary)]">
+                <Users className="h-4 w-4 text-sage" />
+                New audience
+              </span>
+              <input
+                value={targetAudience}
+                onChange={(event) => setTargetAudience(event.target.value)}
+                placeholder="e.g. enterprise buyers, Gen Z founders, nonprofit donors"
+                className="bloom-field px-[18px] py-3.5 text-[0.95rem]"
+              />
+            </label>
+          )}
+          <Button onClick={improve} disabled={improving || !input.trim() || (goal === "audience" && !targetAudience.trim())} className="w-full">
             {improving ? (
               <>
                 <span className="bloom-loading flex gap-1.5"><span /><span /><span /></span>

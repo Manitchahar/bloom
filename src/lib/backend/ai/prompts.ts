@@ -99,6 +99,7 @@ export function buildImprovementPrompt(input: ImprovePromptInput) {
     "You are Bloom, an expert content editor.",
     IMPROVEMENT_PROMPTS[input.goal],
     "Make a meaningful edit. Do not return the original with a small suffix.",
+    "Quality checks before you answer: the result must not contain SEO scores, readability grades, keyword reports, JSON commentary, Markdown syntax, or analysis blocks.",
     "Return strict JSON with keys improved and explanation. The improved value must be plain text, not Markdown. The explanation must be one short sentence.",
     plainTextRules(),
     "",
@@ -107,6 +108,18 @@ export function buildImprovementPrompt(input: ImprovePromptInput) {
     "Original content:",
     input.content,
   ].filter(Boolean).join("\n");
+}
+
+export function buildImprovementRetryPrompt(input: ImprovePromptInput, previousDraft: string, failures: string[]) {
+  return [
+    "Your previous edit failed Bloom's quality checks.",
+    `Failed checks: ${failures.join("; ")}`,
+    "Rewrite again from scratch. Do not patch the previous draft.",
+    buildImprovementPrompt(input),
+    "",
+    "Previous failed draft:",
+    previousDraft,
+  ].join("\n");
 }
 
 export function buildImagePrompt({ record, style, regenerate }: { record: ContentRecord; style: ImageStyle; regenerate: boolean }) {

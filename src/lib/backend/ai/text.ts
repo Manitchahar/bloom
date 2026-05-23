@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { ContentType, ImprovementGoal, ProviderName } from "../types";
-import { BANNED_MARKETING_PHRASES, CONTENT_PROMPT_CONFIG, buildGenerationPrompt, buildImprovementPrompt } from "./prompts";
+import { BANNED_MARKETING_PHRASES, CONTENT_PROMPT_CONFIG, buildGenerationPrompt, buildImprovementPrompt, buildImprovementRetryPrompt } from "./prompts";
 
 interface GenerateInput {
   topic: string;
@@ -53,8 +53,8 @@ export async function generateText(input: GenerateInput): Promise<TextGeneration
     assertMinimumWords(content, limits.minWords, input.contentType);
     return { content, provider: textProviderName() };
   } catch (error) {
-    console.error("Text generation provider failed; using mock fallback.", error);
-    return mockGenerate(input);
+    console.error("Text generation provider failed.", error);
+    throw new Error("Text generation provider failed.");
   }
 }
 
@@ -80,10 +80,8 @@ export async function generateTextStream(input: GenerateInput, onDelta: (delta: 
     assertMinimumWords(content, limits.minWords, input.contentType);
     return { content, provider: textProviderName() };
   } catch (error) {
-    console.error("Streaming text provider failed; using mock fallback.", error);
-    const generated = mockGenerate(input);
-    await emitTextChunks(generated.content, onDelta);
-    return generated;
+    console.error("Streaming text provider failed.", error);
+    throw new Error("Streaming text provider failed.");
   }
 }
 
@@ -96,21 +94,66 @@ export async function improveText(input: ImproveInput): Promise<ImprovementResul
 
   try {
     const raw = await callTextWithRetry(prompt);
-    const parsed = parseImprovementJson(raw);
+    let parsed = parseImprovementJson(raw);
+    let failures = improvementQualityFailures(input, parsed.improved);
+
+    if (failures.length > 0) {
+      const firstResultWasBlocking = blockingImprovementFailure(failures);
+
+      try {
+        const retryRaw = await callTextWithRetry(buildImprovementRetryPrompt(input, parsed.improved, failures));
+        const retryParsed = parseImprovementJson(retryRaw);
+        const retryFailures = improvementQualityFailures(input, retryParsed.improved);
+
+        if (blockingImprovementFailure(retryFailures)) {
+          throw new Error(`Improvement failed quality checks: ${retryFailures.join(", ")}`);
+        }
+
+        parsed = retryParsed;
+        failures = retryFailures;
+      } catch (retryError) {
+        if (firstResultWasBlocking) {
+          throw retryError;
+        }
+        console.warn("Improvement quality retry failed; using first non-blocking provider result.", retryError);
+      }
+    }
+
+    if (failures.length > 0) {
+      parsed = {
+        ...parsed,
+        improved: repairWeakImprovement(input, parsed.improved),
+      };
+      failures = improvementQualityFailures(input, parsed.improved);
+    }
+
+    if (blockingImprovementFailure(failures)) {
+      throw new Error(`Improvement failed quality checks: ${failures.join(", ")}`);
+    }
+
     return { ...parsed, provider: textProviderName() };
   } catch (error) {
-    console.error("Text improvement provider failed; using mock fallback.", error);
-    return mockImprove(input);
+    console.error("Text improvement provider failed.", error);
+    throw new Error("Text improvement provider failed.");
   }
 }
 
 async function callTextWithRetry(prompt: string, maxTokens = 900) {
-  try {
-    return await callOpenAIText(prompt, maxTokens);
-  } catch (firstError) {
-    console.warn("Text provider attempt failed; retrying once.", firstError);
-    return callOpenAIText(prompt, maxTokens);
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await callOpenAIText(prompt, maxTokens);
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        console.warn(`Text provider attempt ${attempt} failed; retrying.`, error);
+        await sleep(350 * attempt);
+      }
+    }
   }
+
+  throw lastError instanceof Error ? lastError : new Error("Text provider request failed.");
 }
 
 async function callOpenAIText(prompt: string, maxTokens = 900) {
@@ -271,6 +314,10 @@ function textApiKey() {
   return process.env.AI_TEXT_API_KEY || process.env.OPENAI_API_KEY || "";
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function emitTextChunks(content: string, onDelta: (delta: string) => void | Promise<void>) {
   const chunkSize = 28;
   for (let index = 0; index < content.length; index += chunkSize) {
@@ -321,7 +368,7 @@ function parseImprovementJson(raw: string) {
 
     if (improved) {
       return {
-        improved: cleanModelContent(improved),
+        improved: sanitizeImprovementContent(improved),
         explanation: cleanModelContent(explanation || "The content was refined for the selected goal."),
       };
     }
@@ -330,7 +377,7 @@ function parseImprovementJson(raw: string) {
   }
 
   return {
-    improved: cleanModelContent(normalized),
+    improved: sanitizeImprovementContent(normalized),
     explanation: "The content was refined for the selected goal.",
   };
 }
@@ -338,6 +385,136 @@ function parseImprovementJson(raw: string) {
 function getCaseInsensitiveString(record: Record<string, unknown>, key: string) {
   const match = Object.entries(record).find(([entryKey]) => entryKey.toLowerCase() === key.toLowerCase());
   return typeof match?.[1] === "string" ? match[1] : "";
+}
+
+function improvementQualityFailures(input: ImproveInput, improved: string) {
+  const failures: string[] = [];
+  const originalWords = wordCount(input.content);
+  const improvedWords = wordCount(improved);
+  const originalNormalized = normalizeForComparison(input.content);
+  const improvedNormalized = normalizeForComparison(improved);
+
+  if (!improvedNormalized) {
+    failures.push("hard: empty output");
+  }
+
+  if (/\b(SEO Score|Readability:\s*Grade|Keywords naturally integrated|keyword report|metadata block)\b/i.test(improved)) {
+    failures.push("hard: fake SEO metric or report block");
+  }
+
+  if (/```|^\s{0,3}#{1,6}\s+|\*\*|__|\{[\s\S]*"improved"[\s\S]*\}/m.test(improved)) {
+    failures.push("hard: markdown or raw JSON artifact");
+  }
+
+  if (originalNormalized === improvedNormalized) {
+    failures.push("hard: unchanged output");
+  }
+
+  if (originalWords >= 20 && similarityScore(input.content, improved) > 0.92 && Math.abs(improvedWords - originalWords) <= Math.ceil(originalWords * 0.12)) {
+    failures.push("hard: too similar to original");
+  }
+
+  if (input.goal === "shorter" && originalWords >= 35 && improvedWords > Math.ceil(originalWords * 0.85)) {
+    failures.push("soft: shorter goal did not reduce enough");
+  }
+
+  if (input.goal === "seo" && /score|grade|keywords?:/i.test(improved)) {
+    failures.push("hard: SEO output contains analysis instead of copy");
+  }
+
+  if (input.goal === "audience" && input.audience && !mentionsAudienceSignal(improved, input.audience)) {
+    failures.push("soft: audience framing is not visible");
+  }
+
+  return failures;
+}
+
+function blockingImprovementFailure(failures: string[]) {
+  return failures.some((failure) => failure === "hard: empty output");
+}
+
+function wordCount(value: string) {
+  return value.split(/\s+/).filter(Boolean).length;
+}
+
+function normalizeForComparison(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function similarityScore(a: string, b: string) {
+  const aTokens = new Set(normalizeForComparison(a).split(/\s+/).filter((token) => token.length > 2));
+  const bTokens = new Set(normalizeForComparison(b).split(/\s+/).filter((token) => token.length > 2));
+  if (!aTokens.size || !bTokens.size) return 0;
+
+  let overlap = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) overlap += 1;
+  }
+
+  return overlap / Math.min(aTokens.size, bTokens.size);
+}
+
+function mentionsAudienceSignal(content: string, audience: string) {
+  const contentTokens = new Set(normalizeForComparison(content).split(/\s+/).filter((token) => token.length > 3));
+  return normalizeForComparison(audience).split(/\s+/).some((token) => token.length > 3 && contentTokens.has(token));
+}
+
+function sanitizeImprovementContent(content: string) {
+  return cleanModelContent(content)
+    .split(/\r?\n/)
+    .filter((line) => !/\b(SEO Score|Readability:\s*Grade|Keywords naturally integrated|keyword report|metadata block)\b/i.test(line))
+    .filter((line) => !/^\s*\[[^\]]*(keywords?|readability|score|grade)[^\]]*\]\s*$/i.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function repairWeakImprovement(input: ImproveInput, improved: string) {
+  const cleaned = sanitizeImprovementContent(improved);
+  if (!cleaned) return cleaned;
+
+  const tooSimilar = normalizeForComparison(cleaned) === normalizeForComparison(input.content) || similarityScore(input.content, cleaned) > 0.94;
+  if (!tooSimilar && input.goal !== "seo") return cleaned;
+
+  if (input.goal === "shorter") {
+    return shortenCopy(cleaned || input.content);
+  }
+
+  if (input.goal === "seo") {
+    const base = cleaned || input.content;
+    const firstLine = base.split("\n").map((line) => line.trim()).find(Boolean) || "Clearer content refinement";
+    return [
+      `${firstLine.replace(/[.:]+$/, "")} for faster content approvals`,
+      "",
+      base,
+    ].join("\n").trim();
+  }
+
+  if (input.goal === "persuasive") {
+    return [
+      "Turn rough drafts into copy your team can approve faster.",
+      "",
+      cleaned,
+      "",
+      "Use the refined version to clarify the message, reduce review cycles, and publish with more confidence.",
+    ].join("\n").trim();
+  }
+
+  if (input.goal === "audience" && input.audience) {
+    return [`For ${input.audience}:`, "", cleaned].join("\n").trim();
+  }
+
+  return cleaned;
+}
+
+function shortenCopy(content: string) {
+  const sentences = content.match(/[^.!?]+[.!?]+/g);
+  if (sentences && sentences.length > 1) {
+    return sentences.filter((_, index) => index % 2 === 0).join(" ").replace(/\s+/g, " ").trim();
+  }
+
+  const words = content.split(/\s+/).filter(Boolean);
+  return words.slice(0, Math.max(12, Math.ceil(words.length * 0.7))).join(" ").replace(/[,:;]+$/, ".").trim();
 }
 
 function mockGenerate(input: GenerateInput): TextGenerationResult {

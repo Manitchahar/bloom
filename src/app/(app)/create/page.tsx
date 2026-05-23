@@ -3,7 +3,7 @@
 import { PageHeader } from "@/components/bloom/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { generateContent, generateImage, getSettings, type ContentRecord, type ContentType, type ImageStyle } from "@/lib/content-client";
+import { generateContentStream, generateImage, getSettings, type ContentRecord, type ContentType, type ImageStyle } from "@/lib/content-client";
 import { cn } from "@/lib/utils";
 import {
   Copy,
@@ -73,39 +73,30 @@ export default function CreatePage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!output) return;
-
-    let index = 0;
-    const interval = window.setInterval(() => {
-      if (index >= output.length) {
-        window.clearInterval(interval);
-        return;
-      }
-      index += 5;
-      setDisplayedOutput(output.slice(0, index));
-    }, 10);
-
-    return () => window.clearInterval(interval);
-  }, [output]);
-
   const generate = useCallback(async () => {
     setGenerating(true);
-    setShowOutput(false);
+    setShowOutput(true);
     setShowImage(false);
     setError("");
     setOutput("");
     setDisplayedOutput("");
     setRecord(null);
+    window.setTimeout(() => outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
 
     try {
-      const response = await generateContent({ topic, audience, tone, contentType: type, brandVoice });
+      let streamedOutput = "";
+      const response = await generateContentStream({ topic, audience, tone, contentType: type, brandVoice }, (delta) => {
+        streamedOutput += delta;
+        setOutput(streamedOutput);
+        setDisplayedOutput(streamedOutput);
+      });
       setRecord(response.item);
       setOutput(response.item.content);
+      setDisplayedOutput(response.item.content);
       setShowOutput(true);
-      window.setTimeout(() => outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to generate content.");
+      setShowOutput(false);
     } finally {
       setGenerating(false);
     }
@@ -240,7 +231,7 @@ export default function CreatePage() {
             <h3 className="mb-4 font-display text-[1.3rem] font-semibold">Your fresh {outputLabel}</h3>
             <div className="whitespace-pre-wrap text-base leading-[1.8] text-[var(--text-secondary)]">
               {displayedOutput}
-              {displayedOutput.length < output.length && <span className="typing-cursor" />}
+              {generating && <span className="typing-cursor" />}
             </div>
             <div className="mt-6 flex flex-wrap gap-3">
               <Button variant="secondary" size="sm" onClick={() => navigator.clipboard.writeText(output)}>

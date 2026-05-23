@@ -41,6 +41,71 @@ export function generateContent(input: {
   });
 }
 
+export async function generateContentStream(
+  input: {
+    topic: string;
+    audience: string;
+    tone: string;
+    contentType: ContentType;
+    brandVoice?: string;
+  },
+  onDelta: (delta: string) => void
+) {
+  const response = await fetch("/api/content/generate/stream", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    const data = await response.json();
+    const failure = data as ApiFailure;
+    throw new Error(failure.error?.message || "Request failed.");
+  }
+
+  if (!response.body) {
+    throw new Error("Streaming response was not available.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line) as
+        | { type: "start" }
+        | { type: "delta"; delta: string }
+        | { type: "done"; item: ContentRecord; provider: ProviderName }
+        | { type: "error"; error: ApiFailure["error"] };
+
+      if (event.type === "delta") {
+        onDelta(event.delta);
+      }
+
+      if (event.type === "done") {
+        return { success: true as const, item: event.item, provider: event.provider };
+      }
+
+      if (event.type === "error") {
+        throw new Error(event.error.message);
+      }
+    }
+  }
+
+  throw new Error("Streaming response ended before content was saved.");
+}
+
 export function improveContent(input: {
   content: string;
   goal: ImprovementGoal;

@@ -58,6 +58,35 @@ export async function generateText(input: GenerateInput): Promise<TextGeneration
   }
 }
 
+export async function generateTextStream(input: GenerateInput, onDelta: (delta: string) => void | Promise<void>): Promise<TextGenerationResult> {
+  if (!textApiKey()) {
+    const generated = mockGenerate(input);
+    await emitTextChunks(generated.content, onDelta);
+    return generated;
+  }
+
+  if (!usesChatCompletions()) {
+    const generated = await generateText(input);
+    await emitTextChunks(generated.content, onDelta);
+    return generated;
+  }
+
+  const prompt = buildGenerationPrompt(input);
+  const limits = CONTENT_PROMPT_CONFIG[input.contentType];
+
+  try {
+    const raw = await callChatCompletionsTextStream(prompt, limits.maxTokens, onDelta);
+    const content = enforceWordLimit(cleanModelContent(raw), limits.maxWords);
+    assertMinimumWords(content, limits.minWords, input.contentType);
+    return { content, provider: textProviderName() };
+  } catch (error) {
+    console.error("Streaming text provider failed; using mock fallback.", error);
+    const generated = mockGenerate(input);
+    await emitTextChunks(generated.content, onDelta);
+    return generated;
+  }
+}
+
 export async function improveText(input: ImproveInput): Promise<ImprovementResult> {
   if (!textApiKey()) {
     return mockImprove(input);
@@ -118,26 +147,7 @@ async function callOpenAIText(prompt: string, maxTokens = 900) {
 }
 
 async function callChatCompletionsText(prompt: string, maxTokens: number) {
-  const body: Record<string, unknown> = {
-    model: textModel(),
-    messages: [
-      {
-        role: "user",
-        content: prompt,
-      },
-    ],
-    temperature: 0.65,
-    max_tokens: maxTokens,
-  };
-
-  const reasoningEffort = process.env.AI_TEXT_REASONING_EFFORT;
-  if (reasoningEffort) {
-    body.reasoning_effort = reasoningEffort;
-  }
-
-  if (process.env.AI_TEXT_DISABLE_THINKING === "true") {
-    body.chat_template_kwargs = { enable_thinking: false };
-  }
+  const body = buildChatCompletionsBody(prompt, maxTokens);
 
   const response = await fetch(`${textBaseUrl()}/chat/completions`, {
     method: "POST",
@@ -162,8 +172,110 @@ async function callChatCompletionsText(prompt: string, maxTokens: number) {
   return content.trim();
 }
 
+async function callChatCompletionsTextStream(prompt: string, maxTokens: number, onDelta: (delta: string) => void | Promise<void>) {
+  const body = buildChatCompletionsBody(prompt, maxTokens, true);
+
+  const response = await fetch(`${textBaseUrl()}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${textApiKey()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Text provider stream request failed: ${response.status} ${text}`);
+  }
+
+  if (!response.body) {
+    throw new Error("Text provider stream response did not include a body.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+
+      const data = trimmed.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+
+      const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
+      const delta = parsed.choices?.[0]?.delta?.content;
+      if (delta) {
+        fullText += delta;
+        await onDelta(delta);
+      }
+    }
+  }
+
+  if (!fullText.trim()) {
+    throw new Error("Text provider stream did not include content.");
+  }
+
+  return fullText.trim();
+}
+
+function buildChatCompletionsBody(prompt: string, maxTokens: number, stream = false) {
+  const body: Record<string, unknown> = {
+    model: textModel(),
+    messages: [
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+    temperature: 0.65,
+  };
+
+  if (textProviderName() === "xiaomi") {
+    body.max_completion_tokens = maxTokens;
+  } else {
+    body.max_tokens = maxTokens;
+  }
+
+  if (stream) {
+    body.stream = true;
+  }
+
+  const reasoningEffort = process.env.AI_TEXT_REASONING_EFFORT;
+  if (reasoningEffort) {
+    body.reasoning_effort = reasoningEffort;
+  }
+
+  if (process.env.AI_TEXT_DISABLE_THINKING === "true") {
+    if (textProviderName() === "xiaomi") {
+      body.thinking = { type: "disabled" };
+    } else {
+      body.chat_template_kwargs = { enable_thinking: false };
+    }
+  }
+
+  return body;
+}
+
 function textApiKey() {
   return process.env.AI_TEXT_API_KEY || process.env.OPENAI_API_KEY || "";
+}
+
+async function emitTextChunks(content: string, onDelta: (delta: string) => void | Promise<void>) {
+  const chunkSize = 28;
+  for (let index = 0; index < content.length; index += chunkSize) {
+    await onDelta(content.slice(index, index + chunkSize));
+  }
 }
 
 function textBaseUrl() {

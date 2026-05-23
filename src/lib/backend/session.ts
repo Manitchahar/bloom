@@ -56,3 +56,10 @@ export function applySessionCookie(response: NextResponse, session: SessionState
 
   return response;
 }
+
+export function sessionCookieHeader(session: SessionState) {
+  if (!session.shouldSetCookie) return null;
+
+  const secure = process.env.BLOOM_SECURE_COOKIES === "true" ? "; Secure" : "";
+  return `${COOKIE_NAME}=${encode(session.sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${60 * 60 * 24 * 30}${secure}`;
+}

@@ -308,19 +308,36 @@ function extractOutputText(data: { output?: Array<{ content?: Array<{ text?: str
 }
 
 function parseImprovementJson(raw: string) {
+  const normalized = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+
   try {
-    const parsed = JSON.parse(raw) as { improved?: unknown; explanation?: unknown };
-    if (typeof parsed.improved === "string" && typeof parsed.explanation === "string") {
-      return { improved: cleanModelContent(parsed.improved), explanation: cleanModelContent(parsed.explanation) };
+    const parsed = JSON.parse(normalized) as Record<string, unknown>;
+    const improved = getCaseInsensitiveString(parsed, "improved");
+    const explanation = getCaseInsensitiveString(parsed, "explanation");
+
+    if (improved) {
+      return {
+        improved: cleanModelContent(improved),
+        explanation: cleanModelContent(explanation || "The content was refined for the selected goal."),
+      };
     }
   } catch {
     // Fall through to resilient parsing for models that return prose.
   }
 
   return {
-    improved: cleanModelContent(raw),
+    improved: cleanModelContent(normalized),
     explanation: "The content was refined for the selected goal.",
   };
+}
+
+function getCaseInsensitiveString(record: Record<string, unknown>, key: string) {
+  const match = Object.entries(record).find(([entryKey]) => entryKey.toLowerCase() === key.toLowerCase());
+  return typeof match?.[1] === "string" ? match[1] : "";
 }
 
 function mockGenerate(input: GenerateInput): TextGenerationResult {

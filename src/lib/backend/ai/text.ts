@@ -465,7 +465,14 @@ function mockImprove(input: ImproveInput): ImprovementResult {
   } else if (input.goal === "formal") {
     improved = input.content.replace(/don't/g, "do not").replace(/can't/g, "cannot").replace(/!/g, ".");
   } else if (input.goal === "seo") {
-    improved = `${input.content}\n\n[Keywords naturally integrated | Readability: Grade 8 | SEO Score: 92/100]`;
+    const firstLine = input.content.split("\n").map((line) => line.trim()).find(Boolean) || "A clearer content workflow";
+    improved = [
+      `${firstLine}: clearer content refinement for busy teams`,
+      "",
+      input.content.replace(/\n{3,}/g, "\n\n").trim(),
+      "",
+      "Use Bloom to refine existing copy into clearer, more focused content that is easier to scan, easier to approve, and easier to publish.",
+    ].join("\n");
   } else {
     improved = `For ${input.audience || "a new audience"}: ${input.content.replace(/\./g, "! ")}`;
   }
@@ -474,7 +481,7 @@ function mockImprove(input: ImproveInput): ImprovementResult {
     shorter: "Trimmed redundancy while preserving the core message.",
     persuasive: "Added urgency, benefit language, and a clearer call to action.",
     formal: "Adjusted wording for a more professional register.",
-    seo: "Added search-friendly structure and natural keyword cues.",
+    seo: "Added a search-focused heading, clearer phrasing, and more scan-friendly structure.",
     audience: "Reframed the message for the requested audience.",
   };
 

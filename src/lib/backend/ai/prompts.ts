@@ -43,11 +43,11 @@ export const CONTENT_PROMPT_CONFIG: Record<ContentType, { strategy: string; maxT
 };
 
 export const IMPROVEMENT_PROMPTS: Record<ImprovementGoal, string> = {
-  shorter: "Make the content shorter while preserving the core message and strongest details.",
-  persuasive: "Make the content more persuasive with stronger benefits, urgency, and a clear call to action.",
-  formal: "Make the content more formal, precise, and professional.",
-  seo: "Improve SEO by adding natural keyword phrasing, structure, and scan-friendly formatting.",
-  audience: "Rewrite the content for the specified audience while keeping the original intent.",
+  shorter: "Rewrite the content to be 25-40% shorter while preserving the core message and strongest details. Remove filler, repeated claims, and soft setup.",
+  persuasive: "Rewrite the content to be more persuasive with a sharper benefit, clearer stakes, concrete proof, and a stronger call to action.",
+  formal: "Rewrite the content in a polished professional register with clearer structure, precise wording, and no casual phrasing.",
+  seo: "Rewrite the content for search visibility with a clearer search-intent headline, natural keyword phrasing, stronger structure, and scan-friendly wording. Do not invent SEO scores, readability grades, keyword reports, metadata blocks, or bracketed analysis.",
+  audience: "Rewrite the content for the specified audience with visibly different vocabulary, examples, objections, and framing while keeping the original intent.",
 };
 
 export const STYLE_PROMPTS: Record<ImageStyle, string> = {
@@ -98,6 +98,7 @@ export function buildImprovementPrompt(input: ImprovePromptInput) {
   return [
     "You are Bloom, an expert content editor.",
     IMPROVEMENT_PROMPTS[input.goal],
+    "Make a meaningful edit. Do not return the original with a small suffix.",
     "Return strict JSON with keys improved and explanation. The improved value must be plain text, not Markdown. The explanation must be one short sentence.",
     plainTextRules(),
     "",

@@ -361,8 +361,8 @@ function parseImprovementJson(raw: string) {
     .replace(/```$/i, "")
     .trim();
 
-  try {
-    const parsed = JSON.parse(normalized) as Record<string, unknown>;
+  const parsed = parseJsonObject(normalized);
+  if (parsed) {
     const improved = getCaseInsensitiveString(parsed, "improved");
     const explanation = getCaseInsensitiveString(parsed, "explanation");
 
@@ -372,8 +372,14 @@ function parseImprovementJson(raw: string) {
         explanation: cleanModelContent(explanation || "The content was refined for the selected goal."),
       };
     }
-  } catch {
-    // Fall through to resilient parsing for models that return prose.
+  }
+
+  const improvedField = extractJsonStringField(normalized, "improved");
+  if (improvedField) {
+    return {
+      improved: sanitizeImprovementContent(improvedField),
+      explanation: cleanModelContent(extractJsonStringField(normalized, "explanation") || "The content was refined for the selected goal."),
+    };
   }
 
   return {
@@ -385,6 +391,40 @@ function parseImprovementJson(raw: string) {
 function getCaseInsensitiveString(record: Record<string, unknown>, key: string) {
   const match = Object.entries(record).find(([entryKey]) => entryKey.toLowerCase() === key.toLowerCase());
   return typeof match?.[1] === "string" ? match[1] : "";
+}
+
+function parseJsonObject(value: string) {
+  const candidates = [value];
+  const firstBrace = value.indexOf("{");
+  const lastBrace = value.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(value.slice(firstBrace, lastBrace + 1));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  return null;
+}
+
+function extractJsonStringField(value: string, field: string) {
+  const pattern = new RegExp(`"${field}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, "i");
+  const match = value.match(pattern);
+  if (!match?.[1]) return "";
+
+  try {
+    return JSON.parse(`"${match[1]}"`) as string;
+  } catch {
+    return match[1].replace(/\\"/g, '"').replace(/\\n/g, "\n");
+  }
 }
 
 function improvementQualityFailures(input: ImproveInput, improved: string) {

@@ -1,0 +1,357 @@
+import crypto from "node:crypto";
+import type { ContentType, ImprovementGoal, ProviderName } from "../types";
+import { BANNED_MARKETING_PHRASES, CONTENT_PROMPT_CONFIG, buildGenerationPrompt, buildImprovementPrompt } from "./prompts";
+
+interface GenerateInput {
+  topic: string;
+  audience: string;
+  tone: string;
+  contentType: ContentType;
+  brandVoice?: string;
+}
+
+interface ImproveInput {
+  content: string;
+  goal: ImprovementGoal;
+  audience?: string;
+  brandVoice?: string;
+}
+
+export interface TextGenerationResult {
+  content: string;
+  provider: ProviderName;
+}
+
+export interface ImprovementResult {
+  improved: string;
+  explanation: string;
+  provider: ProviderName;
+}
+
+export function makeTitle(content: string, topic: string) {
+  const firstLine = content.split("\n").map((line) => line.trim()).find(Boolean);
+  const clean = (firstLine || topic).replace(/^subject:\s*/i, "").replace(/[*#]/g, "").trim();
+  return clean.slice(0, 90) || "Untitled bloom";
+}
+
+export function makeExcerpt(content: string) {
+  const clean = content.replace(/\s+/g, " ").trim();
+  return clean.length > 170 ? `${clean.slice(0, 167)}...` : clean;
+}
+
+export async function generateText(input: GenerateInput): Promise<TextGenerationResult> {
+  if (!textApiKey()) {
+    return mockGenerate(input);
+  }
+
+  const prompt = buildGenerationPrompt(input);
+  const limits = CONTENT_PROMPT_CONFIG[input.contentType];
+
+  try {
+    const raw = await callTextWithRetry(prompt, limits.maxTokens);
+    const content = enforceWordLimit(cleanModelContent(raw), limits.maxWords);
+    assertMinimumWords(content, limits.minWords, input.contentType);
+    return { content, provider: textProviderName() };
+  } catch (error) {
+    console.error("Text generation provider failed; using mock fallback.", error);
+    return mockGenerate(input);
+  }
+}
+
+export async function improveText(input: ImproveInput): Promise<ImprovementResult> {
+  if (!textApiKey()) {
+    return mockImprove(input);
+  }
+
+  const prompt = buildImprovementPrompt(input);
+
+  try {
+    const raw = await callTextWithRetry(prompt);
+    const parsed = parseImprovementJson(raw);
+    return { ...parsed, provider: textProviderName() };
+  } catch (error) {
+    console.error("Text improvement provider failed; using mock fallback.", error);
+    return mockImprove(input);
+  }
+}
+
+async function callTextWithRetry(prompt: string, maxTokens = 900) {
+  try {
+    return await callOpenAIText(prompt, maxTokens);
+  } catch (firstError) {
+    console.warn("Text provider attempt failed; retrying once.", firstError);
+    return callOpenAIText(prompt, maxTokens);
+  }
+}
+
+async function callOpenAIText(prompt: string, maxTokens = 900) {
+  if (usesChatCompletions()) {
+    return callChatCompletionsText(prompt, maxTokens);
+  }
+
+  const response = await fetch(`${textBaseUrl()}/responses`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${textApiKey()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: textModel(),
+      input: prompt,
+      temperature: 0.7,
+      max_output_tokens: maxTokens,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OpenAI text request failed: ${response.status} ${text}`);
+  }
+
+  const data = await response.json();
+  const outputText = typeof data.output_text === "string" ? data.output_text : extractOutputText(data);
+  if (!outputText) {
+    throw new Error("OpenAI text response did not include text output.");
+  }
+
+  return outputText.trim();
+}
+
+async function callChatCompletionsText(prompt: string, maxTokens: number) {
+  const body: Record<string, unknown> = {
+    model: textModel(),
+    messages: [
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+    temperature: 0.65,
+    max_tokens: maxTokens,
+  };
+
+  const reasoningEffort = process.env.AI_TEXT_REASONING_EFFORT;
+  if (reasoningEffort) {
+    body.reasoning_effort = reasoningEffort;
+  }
+
+  if (process.env.AI_TEXT_DISABLE_THINKING === "true") {
+    body.chat_template_kwargs = { enable_thinking: false };
+  }
+
+  const response = await fetch(`${textBaseUrl()}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${textApiKey()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Text provider request failed: ${response.status} ${text}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("Text provider response did not include message content.");
+  }
+
+  return content.trim();
+}
+
+function textApiKey() {
+  return process.env.AI_TEXT_API_KEY || process.env.OPENAI_API_KEY || "";
+}
+
+function textBaseUrl() {
+  return (process.env.AI_TEXT_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+}
+
+function textModel() {
+  if (process.env.AI_TEXT_MODEL) return process.env.AI_TEXT_MODEL;
+  if (process.env.OPENAI_TEXT_MODEL) return process.env.OPENAI_TEXT_MODEL;
+  return usesChatCompletions() ? "mimo-v2.5" : "gpt-4.1-mini";
+}
+
+function usesChatCompletions() {
+  return Boolean(process.env.AI_TEXT_BASE_URL || process.env.OPENAI_BASE_URL);
+}
+
+function textProviderName(): ProviderName {
+  const baseUrl = textBaseUrl();
+  if (baseUrl.includes("xiaomimimo.com")) return "xiaomi";
+  if (baseUrl.includes("api.openai.com")) return "openai";
+  return "custom";
+}
+
+function extractOutputText(data: { output?: Array<{ content?: Array<{ text?: string; type?: string }> }> }) {
+  return data.output
+    ?.flatMap((item) => item.content || [])
+    .map((content) => content.text || "")
+    .join("")
+    .trim();
+}
+
+function parseImprovementJson(raw: string) {
+  try {
+    const parsed = JSON.parse(raw) as { improved?: unknown; explanation?: unknown };
+    if (typeof parsed.improved === "string" && typeof parsed.explanation === "string") {
+      return { improved: cleanModelContent(parsed.improved), explanation: cleanModelContent(parsed.explanation) };
+    }
+  } catch {
+    // Fall through to resilient parsing for models that return prose.
+  }
+
+  return {
+    improved: cleanModelContent(raw),
+    explanation: "The content was refined for the selected goal.",
+  };
+}
+
+function mockGenerate(input: GenerateInput): TextGenerationResult {
+  const base = fallbackContent(input);
+  return {
+    content: enforceWordLimit(cleanModelContent(base), CONTENT_PROMPT_CONFIG[input.contentType].maxWords),
+    provider: "mock",
+  };
+}
+
+function fallbackContent(input: GenerateInput) {
+  const topic = input.topic || "the campaign";
+  const audience = input.audience || "your audience";
+
+  if (input.contentType === "linkedin") {
+    return [
+      `${topic} gets messy when teams start with channels before decisions.`,
+      "",
+      `For ${audience}, the useful move is simpler: define the launch promise, the proof points, and the handoff plan before anyone writes the first post.`,
+      "",
+      "A practical launch checklist:",
+      "- One audience segment",
+      "- One primary conversion action",
+      "- Three proof points sales can defend",
+      "- A shared calendar for creative, review, and publish dates",
+      "",
+      "The best launch plan is not louder. It is easier for the team to execute.",
+      "",
+      "What is the one launch detail your team always catches too late?",
+    ].join("\n");
+  }
+
+  if (input.contentType === "ad") {
+    return [
+      `${topic} without the scramble.`,
+      "",
+      `Built for ${audience} who need a clearer plan, faster approvals, and campaigns that launch on time.`,
+      "",
+      "Plan the message. Align the team. Ship the campaign.",
+    ].join("\n");
+  }
+
+  if (input.contentType === "email") {
+    return [
+      `Subject: A calmer way to plan ${topic}`,
+      "",
+      "Hi there,",
+      "",
+      `If your team serves ${audience}, launch planning can turn chaotic quickly: scattered briefs, late feedback, and messaging that changes after creative is already built.`,
+      "",
+      "A tighter workflow helps:",
+      "- Lock the audience and core promise first",
+      "- Capture objections before copy review",
+      "- Give every asset one owner and one deadline",
+      "",
+      "That turns launch week from a scramble into a sequence your team can trust.",
+      "",
+      "Warmly,",
+      "The Bloom Team",
+    ].join("\n");
+  }
+
+  return [
+    `${topic}: a practical launch planning guide`,
+    "",
+    `For ${audience}, strong launch planning is less about volume and more about sequencing. Teams need a clear promise, a realistic review path, and campaign assets that support the same story.`,
+    "",
+    "Start with the decision document",
+    "Before writing copy, define the audience, the offer, the objections, and the success metric. This gives every channel the same source of truth.",
+    "",
+    "Build the proof before the polish",
+    "Collect customer language, product screenshots, sales notes, and competitive context early. Good creative gets easier when the evidence is already in one place.",
+    "",
+    "Protect the handoff",
+    "Assign owners for copy, design, approvals, publishing, and reporting. A launch plan works when each person knows what they own and when it is due.",
+    "",
+    "A good launch does not feel frantic. It feels rehearsed.",
+  ].join("\n");
+}
+
+function cleanModelContent(content: string) {
+  const bannedPattern = new RegExp(`\\b(${BANNED_MARKETING_PHRASES.map(escapeRegExp).join("|")})\\b`, "gi");
+  return content
+    .replace(/```[\s\S]*?```/g, (match) => match.replace(/```[a-z]*\n?/gi, "").replace(/```/g, ""))
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*]\s+\*\*([^*]+)\*\*/gm, "- $1")
+    .replace(bannedPattern, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function enforceWordLimit(content: string, maxWords: number) {
+  const words = content.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return content;
+
+  const truncated = words.slice(0, maxWords).join(" ");
+  const sentenceEnd = Math.max(truncated.lastIndexOf("."), truncated.lastIndexOf("!"), truncated.lastIndexOf("?"));
+  if (sentenceEnd > Math.floor(truncated.length * 0.55)) {
+    return truncated.slice(0, sentenceEnd + 1).trim();
+  }
+  return `${truncated.replace(/[,.!?;:]+$/, "")}.`;
+}
+
+function assertMinimumWords(content: string, minWords: number, contentType: ContentType) {
+  const words = content.split(/\s+/).filter(Boolean);
+  if (words.length < minWords) {
+    throw new Error(`Text provider returned too little ${contentType} content (${words.length} words).`);
+  }
+}
+
+function mockImprove(input: ImproveInput): ImprovementResult {
+  let improved = input.content;
+
+  if (input.goal === "shorter") {
+    improved = `${input.content.split(". ").filter((_, index) => index % 2 === 0).join(". ")}.`;
+  } else if (input.goal === "persuasive") {
+    improved = `Here's the thing: ${input.content}\n\nDon't wait - take action today.`;
+  } else if (input.goal === "formal") {
+    improved = input.content.replace(/don't/g, "do not").replace(/can't/g, "cannot").replace(/!/g, ".");
+  } else if (input.goal === "seo") {
+    improved = `${input.content}\n\n[Keywords naturally integrated | Readability: Grade 8 | SEO Score: 92/100]`;
+  } else {
+    improved = `For ${input.audience || "a new audience"}: ${input.content.replace(/\./g, "! ")}`;
+  }
+
+  const explanations: Record<ImprovementGoal, string> = {
+    shorter: "Trimmed redundancy while preserving the core message.",
+    persuasive: "Added urgency, benefit language, and a clearer call to action.",
+    formal: "Adjusted wording for a more professional register.",
+    seo: "Added search-friendly structure and natural keyword cues.",
+    audience: "Reframed the message for the requested audience.",
+  };
+
+  return { improved, explanation: explanations[input.goal], provider: "mock" };
+}
+
+export function createContentId() {
+  return crypto.randomUUID();
+}

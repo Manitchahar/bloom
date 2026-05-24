@@ -110,6 +110,22 @@ export function buildImprovementPrompt(input: ImprovePromptInput) {
   ].filter(Boolean).join("\n");
 }
 
+export function buildImprovementStreamPrompt(input: ImprovePromptInput) {
+  return [
+    "You are Bloom, an expert content editor.",
+    IMPROVEMENT_PROMPTS[input.goal],
+    "Make a meaningful edit. Do not return the original with a small suffix.",
+    "Return only the rewritten user-facing copy.",
+    "Do not return JSON, explanations, SEO scores, readability grades, keyword reports, metadata, brackets, or analysis blocks.",
+    plainTextRules(),
+    "",
+    input.audience ? `Target audience: ${input.audience}` : "",
+    input.brandVoice ? `Brand voice: ${input.brandVoice}` : "",
+    "Original content:",
+    input.content,
+  ].filter(Boolean).join("\n");
+}
+
 export function buildImprovementRetryPrompt(input: ImprovePromptInput, previousDraft: string, failures: string[]) {
   return [
     "Your previous edit failed Bloom's quality checks.",

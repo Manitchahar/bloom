@@ -1,6 +1,13 @@
 import crypto from "node:crypto";
 import type { ContentType, ImprovementGoal, ProviderName } from "../types";
-import { BANNED_MARKETING_PHRASES, CONTENT_PROMPT_CONFIG, buildGenerationPrompt, buildImprovementPrompt, buildImprovementRetryPrompt } from "./prompts";
+import {
+  BANNED_MARKETING_PHRASES,
+  CONTENT_PROMPT_CONFIG,
+  buildGenerationPrompt,
+  buildImprovementPrompt,
+  buildImprovementRetryPrompt,
+  buildImprovementStreamPrompt,
+} from "./prompts";
 
 interface GenerateInput {
   topic: string;
@@ -133,6 +140,46 @@ export async function improveText(input: ImproveInput): Promise<ImprovementResul
   } catch (error) {
     console.error("Text improvement provider failed.", error);
     throw new Error("Text improvement provider failed.");
+  }
+}
+
+export async function improveTextStream(input: ImproveInput, onDelta: (delta: string) => void | Promise<void>): Promise<ImprovementResult> {
+  if (!textApiKey()) {
+    const generated = mockImprove(input);
+    await emitTextChunks(generated.improved, onDelta);
+    return generated;
+  }
+
+  if (!usesChatCompletions()) {
+    const generated = await improveText(input);
+    await emitTextChunks(generated.improved, onDelta);
+    return generated;
+  }
+
+  const prompt = buildImprovementStreamPrompt(input);
+
+  try {
+    const raw = await callChatCompletionsTextStream(prompt, 900, onDelta);
+    let improved = sanitizeImprovementContent(raw);
+    let failures = improvementQualityFailures(input, improved);
+
+    if (failures.length > 0) {
+      improved = repairWeakImprovement(input, improved);
+      failures = improvementQualityFailures(input, improved);
+    }
+
+    if (blockingImprovementFailure(failures)) {
+      throw new Error(`Improvement failed quality checks: ${failures.join(", ")}`);
+    }
+
+    return {
+      improved,
+      explanation: improvementExplanation(input.goal),
+      provider: textProviderName(),
+    };
+  } catch (error) {
+    console.error("Streaming text improvement provider failed.", error);
+    throw new Error("Streaming text improvement provider failed.");
   }
 }
 
@@ -520,7 +567,7 @@ function improvementQualityFailures(input: ImproveInput, improved: string) {
 }
 
 function blockingImprovementFailure(failures: string[]) {
-  return failures.some((failure) => failure === "hard: empty output");
+  return failures.some((failure) => failure.startsWith("hard:"));
 }
 
 function wordCount(value: string) {
@@ -753,6 +800,18 @@ function mockImprove(input: ImproveInput): ImprovementResult {
   };
 
   return { improved, explanation: explanations[input.goal], provider: "mock" };
+}
+
+function improvementExplanation(goal: ImprovementGoal) {
+  const explanations: Record<ImprovementGoal, string> = {
+    shorter: "Trimmed redundancy while preserving the core message.",
+    persuasive: "Sharpened the benefit, stakes, proof, and call to action.",
+    formal: "Adjusted the copy for a more polished professional register.",
+    seo: "Reworked the copy with a clearer headline, structure, and natural search phrasing.",
+    audience: "Reframed the message for the requested audience.",
+  };
+
+  return explanations[goal];
 }
 
 export function createContentId() {

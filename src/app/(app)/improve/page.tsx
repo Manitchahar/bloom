@@ -3,9 +3,9 @@
 import { PageHeader } from "@/components/bloom/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { getSettings, improveContent, type ImprovementGoal } from "@/lib/content-client";
+import { getSettings, improveContentStream, type ImprovementGoal } from "@/lib/content-client";
 import { cn } from "@/lib/utils";
-import { Briefcase, Check, Clock, RotateCcw, Scissors, Search, SquarePen, Users, Zap } from "lucide-react";
+import { Briefcase, Check, Clock, Copy, RotateCcw, Scissors, Search, SquarePen, Users, Zap } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 const goals = [
@@ -22,6 +22,7 @@ export default function ImprovePage() {
   const [improving, setImproving] = useState(false);
   const [result, setResult] = useState<{ text: string; explanation: string } | null>(null);
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
   const [brandVoice, setBrandVoice] = useState("");
   const [targetAudience, setTargetAudience] = useState("");
 
@@ -44,13 +45,18 @@ export default function ImprovePage() {
     setImproving(true);
     setResult(null);
     setError("");
+    setCopied(false);
 
     try {
-      const response = await improveContent({
+      let streamedText = "";
+      const response = await improveContentStream({
         content: input,
         goal,
         audience: goal === "audience" ? targetAudience : undefined,
         brandVoice,
+      }, (delta) => {
+        streamedText += delta;
+        setResult({ text: streamedText, explanation: "" });
       });
       setResult({ text: response.improved, explanation: response.explanation });
     } catch (requestError) {
@@ -59,6 +65,18 @@ export default function ImprovePage() {
       setImproving(false);
     }
   }, [brandVoice, goal, input, targetAudience]);
+
+  const copyResult = useCallback(async () => {
+    if (!result?.text) return;
+
+    try {
+      await navigator.clipboard.writeText(result.text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setError("Unable to copy refined text.");
+    }
+  }, [result]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -150,7 +168,7 @@ export default function ImprovePage() {
               <p>Your polished content will appear here...</p>
             </div>
           )}
-          {improving && (
+          {improving && !result && (
             <div className="flex min-h-[260px] flex-col items-center justify-center text-center text-[var(--text-secondary)]">
               <span className="bloom-loading mb-4 flex gap-1.5 text-sage"><span /><span /><span /></span>
               <p>Nurturing your words...</p>
@@ -161,12 +179,15 @@ export default function ImprovePage() {
               <div className="mb-4 whitespace-pre-wrap rounded-[var(--radius-sm)] bg-sage-pale/45 p-5 leading-relaxed text-foreground">
                 {result.text}
               </div>
-              <div className="mb-4 rounded-[var(--radius-sm)] bg-muted p-4 text-sm italic text-[var(--text-secondary)]">
-                {result.explanation}
-              </div>
+              {result.explanation && (
+                <div className="mb-4 rounded-[var(--radius-sm)] bg-muted p-4 text-sm italic text-[var(--text-secondary)]">
+                  {result.explanation}
+                </div>
+              )}
               <div className="flex flex-wrap gap-3">
                 <Button
                   size="sm"
+                  disabled={improving}
                   onClick={() => {
                     setInput(result.text);
                     setResult(null);
@@ -174,7 +195,11 @@ export default function ImprovePage() {
                 >
                   <Check className="h-4 w-4" /> Keep This
                 </Button>
-                <Button variant="secondary" size="sm" onClick={() => setResult(null)}>
+                <Button variant="secondary" size="sm" disabled={improving} onClick={copyResult}>
+                  {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  {copied ? "Copied" : "Copy"}
+                </Button>
+                <Button variant="secondary" size="sm" disabled={improving} onClick={() => setResult(null)}>
                   <RotateCcw className="h-4 w-4" /> Start Over
                 </Button>
               </div>

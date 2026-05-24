@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { getSettings, updateSettings, type ContentType } from "@/lib/content-client";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const tones = ["Professional", "Casual", "Witty", "Inspirational", "Bold"];
 const contentTypes: Array<{ label: string; value: ContentType }> = [
@@ -21,6 +21,7 @@ const voicePresets = [
   { label: "Playful and creative", text: "Playful and creative - witty, imaginative, uses humor and metaphors sparingly." },
   { label: "Luxurious and refined", text: "Luxurious and refined - elegant, aspirational, every word is deliberate and polished." },
 ];
+type SettingsUpdate = Parameters<typeof updateSettings>[0];
 
 export default function SettingsPage() {
   const [defaultTone, setDefaultTone] = useState("Professional");
@@ -30,6 +31,37 @@ export default function SettingsPage() {
   const [brandName, setBrandName] = useState("");
   const [brandIndustry, setBrandIndustry] = useState("");
   const [status, setStatus] = useState("Saved");
+  const [settingsReady, setSettingsReady] = useState(false);
+  const mountedRef = useRef(true);
+  const saveInFlightRef = useRef(false);
+  const pendingSettingsRef = useRef<SettingsUpdate | null>(null);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      pendingSettingsRef.current = null;
+    };
+  }, []);
+
+  const queueSettingsSave = useCallback(async (updates: SettingsUpdate) => {
+    pendingSettingsRef.current = updates;
+    if (saveInFlightRef.current) return;
+
+    saveInFlightRef.current = true;
+    while (pendingSettingsRef.current) {
+      const nextUpdates = pendingSettingsRef.current;
+      pendingSettingsRef.current = null;
+      if (mountedRef.current) setStatus("Saving...");
+
+      try {
+        await updateSettings(nextUpdates);
+        if (mountedRef.current && !pendingSettingsRef.current) setStatus("Saved");
+      } catch {
+        if (mountedRef.current && !pendingSettingsRef.current) setStatus("Unable to save");
+      }
+    }
+    saveInFlightRef.current = false;
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -41,9 +73,13 @@ export default function SettingsPage() {
         setBrandVoice(response.settings.brandVoice);
         setBrandName(response.settings.brandName);
         setBrandIndustry(response.settings.brandIndustry);
+        setSettingsReady(true);
       })
       .catch(() => {
-        if (active) setStatus("Using local defaults");
+        if (active) {
+          setStatus("Using local defaults");
+          setSettingsReady(true);
+        }
       });
 
     return () => {
@@ -52,15 +88,14 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
+    if (!settingsReady) return;
+
     const timer = window.setTimeout(() => {
-      setStatus("Saving...");
-      updateSettings({ defaultTone, defaultContentType, brandName, brandIndustry, brandVoice })
-        .then(() => setStatus("Saved"))
-        .catch(() => setStatus("Unable to save"));
+      void queueSettingsSave({ defaultTone, defaultContentType, brandName, brandIndustry, brandVoice });
     }, 400);
 
     return () => window.clearTimeout(timer);
-  }, [brandIndustry, brandName, brandVoice, defaultContentType, defaultTone]);
+  }, [brandIndustry, brandName, brandVoice, defaultContentType, defaultTone, queueSettingsSave, settingsReady]);
 
   return (
     <div>

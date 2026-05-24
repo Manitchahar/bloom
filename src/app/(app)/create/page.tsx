@@ -57,6 +57,16 @@ export default function CreatePage() {
   const [brandVoice, setBrandVoice] = useState("");
   const [error, setError] = useState("");
   const outputRef = useRef<HTMLDivElement>(null);
+  const generateRequestRef = useRef(0);
+  const generatingRef = useRef(false);
+  const canGenerate = topic.trim().length > 0 && audience.trim().length > 0;
+
+  useEffect(() => {
+    return () => {
+      generateRequestRef.current += 1;
+      generatingRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -75,6 +85,11 @@ export default function CreatePage() {
   }, []);
 
   const generate = useCallback(async () => {
+    if (!canGenerate || generatingRef.current) return;
+
+    generatingRef.current = true;
+    const requestId = generateRequestRef.current + 1;
+    generateRequestRef.current = requestId;
     setGenerating(true);
     setShowOutput(true);
     setShowImage(false);
@@ -82,32 +97,44 @@ export default function CreatePage() {
     setOutput("");
     setDisplayedOutput("");
     setRecord(null);
-    window.setTimeout(() => outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+    window.setTimeout(() => {
+      if (generateRequestRef.current === requestId) {
+        outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 100);
 
     try {
       let streamedOutput = "";
       const response = await generateContentStream({ topic, audience, tone, contentType: type, brandVoice }, (delta) => {
+        if (generateRequestRef.current !== requestId) return;
         streamedOutput += delta;
         setOutput(streamedOutput);
         setDisplayedOutput(streamedOutput);
       });
-      setRecord(response.item);
-      setOutput(response.item.content);
-      setDisplayedOutput(response.item.content);
-      setShowOutput(true);
+      if (generateRequestRef.current === requestId) {
+        setRecord(response.item);
+        setOutput(response.item.content);
+        setDisplayedOutput(response.item.content);
+        setShowOutput(true);
+      }
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to generate content.");
-      setShowOutput(false);
+      if (generateRequestRef.current === requestId) {
+        setError(requestError instanceof Error ? requestError.message : "Unable to generate content.");
+        setShowOutput(false);
+      }
     } finally {
-      setGenerating(false);
+      if (generateRequestRef.current === requestId) {
+        generatingRef.current = false;
+        setGenerating(false);
+      }
     }
-  }, [audience, brandVoice, tone, topic, type]);
+  }, [audience, brandVoice, canGenerate, tone, topic, type]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
         event.preventDefault();
-        if (!generating && topic.trim() && audience.trim()) {
+        if (canGenerate) {
           void generate();
         }
       }
@@ -115,7 +142,7 @@ export default function CreatePage() {
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [audience, generate, generating, topic]);
+  }, [canGenerate, generate]);
 
   const showVisual = async (regenerate = false) => {
     if (!record) return;
@@ -136,7 +163,6 @@ export default function CreatePage() {
 
   const latestImage = record?.images.at(-1);
   const outputLabel = type === "blog" ? "blog post" : type === "linkedin" ? "LinkedIn post" : type === "ad" ? "ad copy" : "newsletter";
-  const canGenerate = topic.trim().length > 0 && audience.trim().length > 0;
 
   return (
     <div>

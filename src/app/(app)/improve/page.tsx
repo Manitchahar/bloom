@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { getSettings, improveContentStream, type ImprovementGoal } from "@/lib/content-client";
 import { cn } from "@/lib/utils";
 import { Briefcase, Check, Clock, Copy, RotateCcw, Scissors, Search, SquarePen, Users, Zap } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const goals = [
   { id: "shorter", label: "Shorter", icon: Scissors },
@@ -25,6 +25,16 @@ export default function ImprovePage() {
   const [copied, setCopied] = useState(false);
   const [brandVoice, setBrandVoice] = useState("");
   const [targetAudience, setTargetAudience] = useState("");
+  const improveRequestRef = useRef(0);
+  const improvingRef = useRef(false);
+  const canImprove = input.trim().length > 0 && (goal !== "audience" || targetAudience.trim().length > 0);
+
+  useEffect(() => {
+    return () => {
+      improveRequestRef.current += 1;
+      improvingRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -40,8 +50,11 @@ export default function ImprovePage() {
   }, []);
 
   const improve = useCallback(async () => {
-    if (!input.trim()) return;
+    if (!canImprove || improvingRef.current) return;
 
+    improvingRef.current = true;
+    const requestId = improveRequestRef.current + 1;
+    improveRequestRef.current = requestId;
     setImproving(true);
     setResult(null);
     setError("");
@@ -55,16 +68,24 @@ export default function ImprovePage() {
         audience: goal === "audience" ? targetAudience : undefined,
         brandVoice,
       }, (delta) => {
+        if (improveRequestRef.current !== requestId) return;
         streamedText += delta;
         setResult({ text: streamedText, explanation: "" });
       });
-      setResult({ text: response.improved, explanation: response.explanation });
+      if (improveRequestRef.current === requestId) {
+        setResult({ text: response.improved, explanation: response.explanation });
+      }
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to refine content.");
+      if (improveRequestRef.current === requestId) {
+        setError(requestError instanceof Error ? requestError.message : "Unable to refine content.");
+      }
     } finally {
-      setImproving(false);
+      if (improveRequestRef.current === requestId) {
+        improvingRef.current = false;
+        setImproving(false);
+      }
     }
-  }, [brandVoice, goal, input, targetAudience]);
+  }, [brandVoice, canImprove, goal, input, targetAudience]);
 
   const copyResult = useCallback(async () => {
     if (!result?.text) return;
@@ -146,7 +167,7 @@ export default function ImprovePage() {
               />
             </label>
           )}
-          <Button onClick={improve} disabled={improving || !input.trim() || (goal === "audience" && !targetAudience.trim())} className="w-full">
+          <Button onClick={improve} disabled={improving || !canImprove} className="w-full">
             {improving ? (
               <>
                 <span className="bloom-loading flex gap-1.5"><span /><span /><span /></span>

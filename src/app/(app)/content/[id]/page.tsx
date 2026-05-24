@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/bloom/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { deleteContent, generateImage, getContent, type ContentRecord, type ImageStyle } from "@/lib/content-client";
+import { downloadImage } from "@/lib/download";
 import { ArrowLeft, Copy, Download, ImageIcon, RefreshCw, Trash2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -179,6 +180,15 @@ export default function ContentDetailPage() {
               <Button variant="secondary" size="sm" onClick={() => void createVisual(true)} disabled={imageLoading}>
                 <RefreshCw className="h-4 w-4" /> Regenerate
               </Button>
+              {latestImage && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void downloadImage(latestImage.imageUrl, `${item.title || "bloom"} visual v${latestImage.version}`)}
+                >
+                  <Download className="h-4 w-4" /> Download Image
+                </Button>
+              )}
             </div>
           </Card>
         </div>

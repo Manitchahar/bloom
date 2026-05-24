@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/bloom/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { generateContentStream, generateImage, getSettings, type ContentRecord, type ContentType, type ImageStyle } from "@/lib/content-client";
+import { downloadImage } from "@/lib/download";
 import { cn } from "@/lib/utils";
 import {
   Copy,
@@ -305,9 +306,20 @@ export default function CreatePage() {
                 </button>
               ))}
             </div>
-            <Button variant="secondary" size="sm" onClick={() => void showVisual(true)} disabled={imageLoading || !record}>
-              <RefreshCw className="h-4 w-4" /> Try Another Style
-            </Button>
+            <div className="flex flex-wrap gap-3">
+              <Button variant="secondary" size="sm" onClick={() => void showVisual(true)} disabled={imageLoading || !record}>
+                <RefreshCw className="h-4 w-4" /> Try Another Style
+              </Button>
+              {latestImage && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void downloadImage(latestImage.imageUrl, `${record?.title || "bloom"} visual v${latestImage.version}`)}
+                >
+                  <Download className="h-4 w-4" /> Download Image
+                </Button>
+              )}
+            </div>
           </Card>
         </div>
       )}

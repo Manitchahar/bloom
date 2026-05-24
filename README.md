@@ -68,10 +68,10 @@ Bloom supports OpenAI-compatible chat completions for text generation:
 
 ```bash
 AI_TEXT_BASE_URL=https://provider.example.com/v1
-AI_TEXT_MODEL=provider-model-name
+AI_TEXT_MODEL=mimo-v2.5-pro
 AI_TEXT_API_KEY=provider_key_here
 AI_TEXT_REASONING_EFFORT=low
-AI_TEXT_DISABLE_THINKING=false
+AI_TEXT_DISABLE_THINKING=true
 ```
 
 If using OpenAI directly instead:

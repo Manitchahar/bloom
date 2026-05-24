@@ -49,8 +49,7 @@ export async function generateText(input: GenerateInput): Promise<TextGeneration
 
   try {
     const raw = await callTextWithRetry(prompt, limits.maxTokens);
-    const content = enforceWordLimit(cleanModelContent(raw), limits.maxWords);
-    assertMinimumWords(content, limits.minWords, input.contentType);
+    const content = prepareGeneratedContent(cleanModelContent(raw), input);
     return { content, provider: textProviderName() };
   } catch (error) {
     console.error("Text generation provider failed.", error);
@@ -76,8 +75,7 @@ export async function generateTextStream(input: GenerateInput, onDelta: (delta: 
 
   try {
     const raw = await callChatCompletionsTextStream(prompt, limits.maxTokens, onDelta);
-    const content = enforceWordLimit(cleanModelContent(raw), limits.maxWords);
-    assertMinimumWords(content, limits.minWords, input.contentType);
+    const content = prepareGeneratedContent(cleanModelContent(raw), input);
     return { content, provider: textProviderName() };
   } catch (error) {
     console.error("Streaming text provider failed.", error);
@@ -332,7 +330,7 @@ function textBaseUrl() {
 function textModel() {
   if (process.env.AI_TEXT_MODEL) return process.env.AI_TEXT_MODEL;
   if (process.env.OPENAI_TEXT_MODEL) return process.env.OPENAI_TEXT_MODEL;
-  return usesChatCompletions() ? "mimo-v2.5" : "gpt-4.1-mini";
+  return usesChatCompletions() ? "mimo-v2.5-pro" : "gpt-4.1-mini";
 }
 
 function usesChatCompletions() {
@@ -352,6 +350,54 @@ function extractOutputText(data: { output?: Array<{ content?: Array<{ text?: str
     .map((content) => content.text || "")
     .join("")
     .trim();
+}
+
+function prepareGeneratedContent(content: string, input: GenerateInput) {
+  const limits = CONTENT_PROMPT_CONFIG[input.contentType];
+  const limited = enforceWordLimit(content, limits.maxWords);
+  if (wordCount(limited) >= limits.minWords) return limited;
+
+  const repaired = enforceWordLimit(expandShortGeneratedContent(limited, input), limits.maxWords);
+  assertMinimumWords(repaired, limits.minWords, input.contentType);
+  return repaired;
+}
+
+function expandShortGeneratedContent(content: string, input: GenerateInput) {
+  const base = content.trim();
+  const topic = input.topic || "this campaign";
+  const audience = input.audience || "your audience";
+
+  if (input.contentType === "ad") {
+    return [
+      base || `${topic} without the scramble.`,
+      "",
+      `Built for ${audience} who need clearer messaging, faster approvals, and a launch plan the whole team can follow.`,
+      "",
+      "Plan the story. Align the team. Ship with confidence.",
+    ].join("\n");
+  }
+
+  if (input.contentType === "linkedin") {
+    return [
+      base,
+      "",
+      `For ${audience}, the useful shift is simple: clarify the promise, prove it with specifics, and make every handoff easier to approve.`,
+    ].filter(Boolean).join("\n");
+  }
+
+  if (input.contentType === "email") {
+    return [
+      base,
+      "",
+      `For ${audience}, the next step is to align the offer, proof points, owners, and publish date before creative work spreads across too many channels.`,
+    ].filter(Boolean).join("\n");
+  }
+
+  return [
+    base,
+    "",
+    `For ${audience}, a strong ${topic} plan needs a clear audience promise, concrete proof, and a simple approval path that keeps the launch moving.`,
+  ].filter(Boolean).join("\n");
 }
 
 function parseImprovementJson(raw: string) {

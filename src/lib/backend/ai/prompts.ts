@@ -46,7 +46,7 @@ export const IMPROVEMENT_PROMPTS: Record<ImprovementGoal, string> = {
   shorter: "Rewrite the content to be 25-40% shorter while preserving the core message and strongest details. Remove filler, repeated claims, and soft setup.",
   persuasive: "Rewrite the content to be more persuasive with a sharper benefit, clearer stakes, concrete proof, and a stronger call to action.",
   formal: "Rewrite the content in a polished professional register with clearer structure, precise wording, and no casual phrasing.",
-  seo: "Rewrite the content for search visibility with a clearer search-intent headline, natural keyword phrasing, stronger structure, and scan-friendly wording. Do not invent SEO scores, readability grades, keyword reports, metadata blocks, or bracketed analysis.",
+  seo: "Rewrite the content as search-friendly copy. Add a useful plain-text headline, natural keyword phrasing, stronger structure, and scan-friendly wording. Return only the rewritten copy and a one-sentence explanation. Do not mention scores, grades, reports, metadata, brackets, or keyword analysis.",
   audience: "Rewrite the content for the specified audience with visibly different vocabulary, examples, objections, and framing while keeping the original intent.",
 };
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useRef, useEffect, useCallback, useSyncExternalStore } from "react";
 import {
   LayoutGrid,
@@ -24,7 +25,6 @@ const navItems = [
 
 export function TopNav() {
   const pathname = usePathname();
-  const router = useRouter();
   const { theme, setTheme } = useTheme();
   const mounted = useSyncExternalStore(
     () => () => {},
@@ -83,12 +83,12 @@ export function TopNav() {
         {navItems.map((item) => {
           const isActive = pathname === item.href;
           return (
-            <button
+            <Link
               key={item.href}
+              href={item.href}
               data-active={isActive}
-              onClick={() => router.push(item.href)}
               className={cn(
-                "relative z-10 flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[var(--radius-pill)] border-none bg-transparent px-5 py-2.5 text-sm font-semibold transition-colors duration-300",
+                "relative z-10 flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[var(--radius-pill)] border-none bg-transparent px-5 py-2.5 text-sm font-semibold transition-colors duration-300 no-underline",
                 isActive
                   ? "text-sage"
                   : "text-[var(--text-secondary)] hover:text-sage"
@@ -96,7 +96,7 @@ export function TopNav() {
             >
               <item.icon className="w-4 h-4" />
               {item.label}
-            </button>
+            </Link>
           );
         })}
       </div>

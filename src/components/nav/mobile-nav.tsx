@@ -1,6 +1,7 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { LayoutGrid, Plus, BarChart3, BookOpen, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -14,24 +15,23 @@ const navItems = [
 
 export function MobileNav() {
   const pathname = usePathname();
-  const router = useRouter();
 
   return (
     <div className="no-print fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t border-[rgba(91,122,84,0.2)] bg-background/95 px-4 py-2 shadow-[0_-4px_18px_rgba(51,72,45,0.08)] backdrop-blur-xl md:hidden">
       {navItems.map((item) => {
         const isActive = pathname === item.href;
         return (
-          <button
+          <Link
             key={item.href}
-            onClick={() => router.push(item.href)}
+            href={item.href}
             className={cn(
-              "flex cursor-pointer flex-col items-center gap-0.5 rounded-xl border-none bg-transparent px-3 py-1.5 text-xs font-medium transition-colors duration-200",
+              "flex cursor-pointer flex-col items-center gap-0.5 rounded-xl border-none bg-transparent px-3 py-1.5 text-xs font-medium transition-colors duration-200 no-underline",
               isActive ? "bg-sage-pale text-sage" : "text-[var(--text-secondary)]"
             )}
           >
             <item.icon className={cn("w-5 h-5", isActive && "text-sage")} />
             {item.label}
-          </button>
+          </Link>
         );
       })}
     </div>

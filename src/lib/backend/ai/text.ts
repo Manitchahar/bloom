@@ -439,7 +439,7 @@ function getCaseInsensitiveString(record: Record<string, unknown>, key: string) 
   return typeof match?.[1] === "string" ? match[1] : "";
 }
 
-function parseJsonObject(value: string) {
+function parseJsonObject(value: string): Record<string, unknown> | null {
   const candidates = [value];
   const firstBrace = value.indexOf("{");
   const lastBrace = value.lastIndexOf("}");
@@ -452,6 +452,10 @@ function parseJsonObject(value: string) {
       const parsed = JSON.parse(candidate) as unknown;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         return parsed as Record<string, unknown>;
+      }
+      if (typeof parsed === "string" && parsed !== candidate) {
+        const nested = parseJsonObject(parsed);
+        if (nested) return nested;
       }
     } catch {
       // Try the next candidate.
